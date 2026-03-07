@@ -1,9 +1,9 @@
 name: Competitor Price Adjustment
 
 on:
-  schedule:
-    # 毎時 0分に実行（JST: UTC+9 のため、UTC で記述）
-    - cron: "0 * * * *"
+  # schedule:
+  #   # 毎時 0分に実行（JST: UTC+9 のため、UTC で記述）
+  #   - cron: "0 * * * *"
   workflow_dispatch:  # 手動実行も可能
 
 jobs:

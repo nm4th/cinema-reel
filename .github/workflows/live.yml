@@ -1,9 +1,9 @@
 name: Live Broadcast Price Adjustment
 
 on:
-  schedule:
-    # 毎朝 7:00 JST (= 22:00 UTC 前日) に実行
-    - cron: "0 22 * * *"
+  # schedule:
+  #   # 毎朝 7:00 JST (= 22:00 UTC 前日) に実行
+  #   - cron: "0 22 * * *"
   workflow_dispatch:  # 手動実行も可能
 
 jobs:
