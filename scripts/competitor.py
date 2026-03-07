@@ -54,31 +54,187 @@ def _extract_hourly_rates(page: Page, plan_selector_text: str) -> dict[int, int]
     """
     競合ページから特定プラン（3h+ or 6h+）の時間帯別料金（円/時）を取得する。
     戻り値: {hour: price_per_hour}  hour は 7〜22
+
+    抽出戦略（順に試行）:
+      1. window.__NEXT_DATA__ の JSON からプラン価格を探す
+      2. プランタブをクリックして料金テーブルを DOM から読み取る
+      3. ページ全文テキストを正規表現でスキャン
+    """
+    # Strategy 1: __NEXT_DATA__ から抽出
+    try:
+        rates = _extract_rates_from_next_data(page, plan_selector_text)
+        if rates:
+            logger.info(
+                "Extracted %d rates from __NEXT_DATA__ for '%s'",
+                len(rates), plan_selector_text,
+            )
+            return rates
+    except Exception as exc:
+        logger.debug("__NEXT_DATA__ strategy failed: %s", exc)
+
+    # Strategy 2: プランタブ/ボタンをクリックして DOM から読み取る
+    try:
+        # プランの見出し・タブ要素を探してアクティブにする
+        for sel in (
+            f"button:has-text('{plan_selector_text}')",
+            f"[role='tab']:has-text('{plan_selector_text}')",
+            f"a:has-text('{plan_selector_text}')",
+            f"li:has-text('{plan_selector_text}')",
+        ):
+            els = page.query_selector_all(sel)
+            if els:
+                els[0].click()
+                try:
+                    page.wait_for_load_state("networkidle", timeout=5_000)
+                except PlaywrightTimeout:
+                    pass
+                break
+    except Exception as exc:
+        logger.debug("Plan tab click failed: %s", exc)
+
+    try:
+        rates = _extract_rates_from_dom(page)
+        if rates:
+            logger.info(
+                "Extracted %d rates from DOM for '%s'", len(rates), plan_selector_text
+            )
+            return rates
+    except Exception as exc:
+        logger.debug("DOM extraction failed: %s", exc)
+
+    # Strategy 3: ページ全文テキストを正規表現でスキャン
+    try:
+        page_text = page.inner_text("body")
+        rates = _extract_rates_from_text(page_text)
+        if rates:
+            logger.info(
+                "Extracted %d rates from page text for '%s'",
+                len(rates), plan_selector_text,
+            )
+            return rates
+    except Exception as exc:
+        logger.debug("Text extraction failed: %s", exc)
+
+    logger.warning("Could not extract rates for plan '%s'", plan_selector_text)
+    return {}
+
+
+def _extract_rates_from_next_data(page: Page, plan_selector_text: str) -> dict[int, int]:
+    """
+    window.__NEXT_DATA__ (Next.js) から時間帯別料金を再帰的に探す。
+
+    SpaceMarket は Next.js 製のため、ページ props に料金データが埋め込まれている。
+    想定データ構造例:
+      props.pageProps.room.priceSetting.prices = [{"hour": 7, "price": 1500}, ...]
+    """
+    raw = page.evaluate(
+        "() => { const el = document.getElementById('__NEXT_DATA__'); "
+        "return el ? el.textContent : null; }"
+    )
+    if not raw:
+        return {}
+
+    data = json.loads(raw)
+    page_props = data.get("props", {}).get("pageProps", {})
+
+    def _find(obj: object, depth: int = 0) -> dict[int, int]:
+        if depth > 10:
+            return {}
+        if isinstance(obj, dict):
+            # {"hour": 7, "price": 1500} 形式のノードを発見
+            if "hour" in obj and "price" in obj:
+                h, p = obj["hour"], obj["price"]
+                if isinstance(h, (int, str)) and isinstance(p, (int, str)):
+                    return {int(h): int(str(p).replace(",", ""))}
+            result: dict[int, int] = {}
+            for v in obj.values():
+                result.update(_find(v, depth + 1))
+            return result
+        if isinstance(obj, list):
+            result = {}
+            for item in obj:
+                result.update(_find(item, depth + 1))
+            return result
+        return {}
+
+    return _find(page_props)
+
+
+def _extract_rates_from_dom(page: Page) -> dict[int, int]:
+    """
+    SpaceMarket 料金テーブルの DOM から時間帯別料金を読み取る。
+
+    SpaceMarket の料金セクションは React コンポーネントで構成されており、
+    クラス名にハッシュが含まれる場合がある。そのため複数のセレクタ候補を
+    順に試す。各行のテキストから時刻と価格を正規表現で抽出する。
+    """
+    # SpaceMarket の料金テーブルで使われる可能性のあるセレクタ候補
+    row_selectors = [
+        # テーブル行
+        "table tr",
+        # React コンポーネントで使われやすいクラス名パターン
+        "[class*='PriceRow']",
+        "[class*='price-row']",
+        "[class*='PriceItem']",
+        "[class*='price-item']",
+        "[class*='TimeSlot']",
+        "[class*='time-slot']",
+        "[class*='RateRow']",
+        "[class*='rate-row']",
+        # 汎用リスト
+        "li",
+        "dl > div",
+    ]
+
+    rates: dict[int, int] = {}
+    for selector in row_selectors:
+        try:
+            rows = page.query_selector_all(selector)
+        except Exception:
+            continue
+        for row in rows:
+            try:
+                text = row.inner_text() or ""
+            except Exception:
+                continue
+            hour_match = re.search(r"\b(\d{1,2}):00", text)
+            price_match = re.search(r"[¥￥]([0-9,]+)", text)
+            if hour_match and price_match:
+                hour = int(hour_match.group(1))
+                price = int(price_match.group(1).replace(",", ""))
+                if 0 <= hour <= 23 and 100 <= price <= 100_000:
+                    rates[hour] = price
+        if rates:
+            logger.debug("DOM: found rates using selector '%s'", selector)
+            return rates
+
+    return rates
+
+
+def _extract_rates_from_text(page_text: str) -> dict[int, int]:
+    """
+    ページ全文テキストから時間帯・価格ペアを正規表現で抽出するフォールバック。
+
+    対応パターン例:
+      "07:00〜08:00  ¥1,500"
+      "7:00-8:00  1,500円"
+      "7時台  ¥1,500"
     """
     rates: dict[int, int] = {}
-
-    # プランタブ・テーブルを特定する（実際のDOM構造に合わせて調整が必要）
-    # SpaceMarket の料金ページは JavaScript レンダリングのため、
-    # 表示されるまで待機してからスクレイピングする
-    try:
-        # プランセクションを探す
-        page.wait_for_selector("text=" + plan_selector_text, timeout=15_000)
-    except PlaywrightTimeout:
-        logger.warning("Plan selector '%s' not found on page.", plan_selector_text)
-        return rates
-
-    # 時間帯別料金テーブルを探す
-    # ※ 実際の SpaceMarket DOM に合わせてセレクタを調整すること
-    rows = page.query_selector_all("table.pricing-table tr, [data-testid='price-row']")
-    for row in rows:
-        text = row.inner_text()
-        # 例: "07:00〜08:00   ¥1,500" のような行を想定
-        hour_match = re.search(r"(\d{1,2}):00", text)
-        price_match = re.search(r"[¥￥]([0-9,]+)", text)
-        if hour_match and price_match:
-            hour = int(hour_match.group(1))
-            price = int(price_match.group(1).replace(",", ""))
-            rates[hour] = price
+    patterns = [
+        r"(\d{1,2}):00[〜~\-–\s]+\d{1,2}:00[^\d]*[¥￥]([0-9,]+)",
+        r"(\d{1,2}):00[^\d¥￥]*[¥￥]([0-9,]+)",
+        r"(\d{1,2}):00[〜~\-–\s]+\d{1,2}:00[^\d]*([\d,]+)\s*円",
+        r"(\d{1,2})時[台台]?[^\d¥￥]*[¥￥]([0-9,]+)",
+    ]
+    for pattern in patterns:
+        for hour_str, price_str in re.findall(pattern, page_text):
+            hour = int(hour_str)
+            price = int(price_str.replace(",", ""))
+            if 7 <= hour <= 22 and 100 <= price <= 100_000:
+                rates[hour] = price
+        if rates:
+            break
 
     return rates
 

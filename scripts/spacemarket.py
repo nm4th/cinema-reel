@@ -10,8 +10,7 @@ from __future__ import annotations
 
 import logging
 import math
-from contextlib import contextmanager
-from typing import Generator
+from statistics import mode as stat_mode
 
 from playwright.sync_api import sync_playwright, Page, Browser, BrowserContext, TimeoutError as PlaywrightTimeout
 
@@ -19,25 +18,100 @@ logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # DOM セレクタ定数
-# ※ SpaceMarket ダッシュボードの実際の UI に合わせて調整が必要
+#
+# SpaceMarket は Ruby on Rails (Devise 認証) + Next.js/React のハイブリッド構成。
+# ログインフォームは Devise のデフォルト命名規則に従い input[name="user[email]"] 等。
+# オーナーダッシュボードは React SPA で、クラス名にハッシュが含まれることがある。
+# セレクタは「より具体的なもの → 汎用フォールバック」の順にカンマ区切りで列挙。
 # ---------------------------------------------------------------------------
 SELECTORS = {
-    "login_email": "input[type='email'], input[name='email']",
-    "login_password": "input[type='password'], input[name='password']",
-    "login_submit": "button[type='submit']",
+    # ---- ログインフォーム (Devise 標準命名) ----
+    "login_email": (
+        "input[name='user[email]'], "
+        "input[id='user_email'], "
+        "input[type='email']"
+    ),
+    "login_password": (
+        "input[name='user[password]'], "
+        "input[id='user_password'], "
+        "input[type='password']"
+    ),
+    "login_submit": (
+        "input[type='submit'][value*='ログイン'], "
+        "input[type='submit'], "
+        "button[type='submit']"
+    ),
+
+    # ---- ダッシュボード ナビゲーション ----
     "nav_space_management": "a[href*='/owner/spaces']",
-    "plan_list_item": "[data-testid='plan-item'], .plan-list-item",
-    "plan_price_input": "input[name='price'], input[data-testid='price-input']",
-    "plan_save_button": "button[type='submit'], button:has-text('保存')",
-    "special_operation_tab": "a:has-text('特別営業'), button:has-text('特別営業')",
-    "special_op_date_input": "input[type='date'], input[data-testid='special-date']",
-    "special_op_start_time": "select[name='start_time'], input[name='start_time']",
-    "special_op_end_time": "select[name='end_time'], input[name='end_time']",
-    "special_op_price_input": "input[name='special_price'], input[data-testid='special-price']",
-    "special_op_save": "button:has-text('設定'), button[type='submit']",
+
+    # ---- プラン一覧アイテム ----
+    # data-testid / class 名 / 汎用テーブル行の順
+    "plan_list_item": (
+        "[data-testid='plan-item'], "
+        "[class*='PlanItem'], "
+        "[class*='plan-item'], "
+        "[class*='PlanRow'], "
+        "tr[data-plan]"
+    ),
+
+    # ---- プラン価格入力 ----
+    "plan_price_input": (
+        "input[name*='price'][type='number'], "
+        "input[data-type='price'], "
+        "input[class*='PriceInput'], "
+        "input[class*='price-input']"
+    ),
+
+    # ---- 保存ボタン ----
+    "plan_save_button": (
+        "button[type='submit']:has-text('保存'), "
+        "button[type='submit']:has-text('更新'), "
+        "button[type='submit']:has-text('変更'), "
+        "button[type='submit']"
+    ),
+
+    # ---- 特別営業タブ ----
+    "special_operation_tab": (
+        "a:has-text('特別営業'), "
+        "button:has-text('特別営業'), "
+        "[href*='special_operation'], "
+        "[href*='special-operation']"
+    ),
+
+    # ---- 特別営業フォーム ----
+    "special_op_date_input": (
+        "input[name*='date'][type='date'], "
+        "input[name*='start_date'], "
+        "input[placeholder*='日付'], "
+        "input[type='date']"
+    ),
+    "special_op_start_time": (
+        "select[name*='start_time'], "
+        "select[name*='start_hour'], "
+        "input[name*='start_time']"
+    ),
+    "special_op_end_time": (
+        "select[name*='end_time'], "
+        "select[name*='end_hour'], "
+        "input[name*='end_time']"
+    ),
+    "special_op_price_input": (
+        "input[name*='price'][type='number'], "
+        "input[name*='special_price'], "
+        "input[class*='SpecialPrice']"
+    ),
+    "special_op_save": (
+        "button[type='submit']:has-text('設定'), "
+        "button[type='submit']:has-text('保存'), "
+        "button[type='submit']:has-text('登録'), "
+        "button[type='submit']"
+    ),
 }
 
-LOGIN_URL = "https://www.spacemarket.com/owner/login"
+# SpaceMarket ログイン URL
+# Devise 標準の /users/sign_in を使用。ログイン後 /owner/ へリダイレクトされる。
+LOGIN_URL = "https://www.spacemarket.com/users/sign_in"
 DASHBOARD_BASE = "https://www.spacemarket.com/owner/spaces"
 
 
@@ -93,9 +167,16 @@ class SpaceMarketDashboard:
         self.page.fill(SELECTORS["login_password"], self.password)
         self.page.click(SELECTORS["login_submit"])
 
-        # ログイン後のリダイレクトを待つ
-        self.page.wait_for_url("**/owner/**", timeout=30_000)
-        logger.info("Login successful.")
+        # ログイン後のリダイレクトを待つ。
+        # Devise はログイン後に /owner/ または直前の URL へリダイレクトする。
+        try:
+            self.page.wait_for_url("**/owner/**", timeout=30_000)
+        except PlaywrightTimeout:
+            # リダイレクト先が /owner/ 以外の場合は手動で遷移
+            logger.warning("Did not redirect to /owner/. Navigating manually.")
+            self.page.goto(DASHBOARD_BASE, wait_until="networkidle", timeout=30_000)
+
+        logger.info("Login successful. Current URL: %s", self.page.url)
 
     # ------------------------------------------------------------------
     # Plan price update
@@ -132,12 +213,15 @@ class SpaceMarketDashboard:
         """
         指定プランの時間帯別料金をダッシュボード UI から入力する。
 
-        ※ SpaceMarket の実際のプラン編集 URL・フォーム構造に合わせて実装する。
-           以下は汎用的な構造を想定したスケルトンです。
+        SpaceMarket オーナーダッシュボードのプラン編集ページへ移動し、
+        時間帯ごとの price input を埋めて保存する。
+
+        時間帯別入力フォームが見つからない場合は全入力欄に代表価格を設定する。
         """
         plan_name = plan_cfg["name"]
 
         # プラン管理ページへ移動
+        # SpaceMarket のプラン編集 URL 候補（実際の構造に合わせて調整）
         plan_url = f"{DASHBOARD_BASE}/{space_id}/plans"
         self.page.goto(plan_url, wait_until="networkidle", timeout=30_000)
 
@@ -145,42 +229,61 @@ class SpaceMarketDashboard:
         plan_items = self.page.query_selector_all(SELECTORS["plan_list_item"])
         target = None
         for item in plan_items:
-            if plan_name in (item.inner_text() or ""):
-                target = item
-                break
+            try:
+                if plan_name in (item.inner_text() or ""):
+                    target = item
+                    break
+            except Exception:
+                continue
 
         if target is None:
             logger.warning("Plan '%s' not found in dashboard. Skipping.", plan_name)
             return
 
         # 編集ボタンをクリック
-        edit_btn = target.query_selector("a:has-text('編集'), button:has-text('編集')")
+        edit_btn = target.query_selector(
+            "a:has-text('編集'), button:has-text('編集'), a:has-text('変更')"
+        )
         if edit_btn:
             edit_btn.click()
             self.page.wait_for_load_state("networkidle")
 
-        # 時間帯別料金を入力
-        # ※ 実際のフォーム構造に合わせて以下を調整する
+        # ① 時間帯別入力フォームを試みる
+        # SpaceMarket は data-hour="{h}" または name="price_{h}" 形式を使う可能性がある
+        filled_count = 0
         for hour, price in sorted(hourly_prices.items()):
-            selector = f"input[data-hour='{hour}'], input[name='price_{hour}']"
-            try:
-                el = self.page.query_selector(selector)
-                if el:
-                    el.fill(str(price))
-            except Exception as exc:
-                logger.debug("Hour %d input not found: %s", hour, exc)
+            for sel in (
+                f"input[data-hour='{hour}']",
+                f"input[name='price_{hour}']",
+                f"input[name*='price'][data-hour='{hour}']",
+                f"input[id*='price_{hour}']",
+            ):
+                try:
+                    el = self.page.query_selector(sel)
+                    if el:
+                        el.fill(str(price))
+                        filled_count += 1
+                        break
+                except Exception:
+                    continue
 
-        # 汎用価格入力欄（時間帯別でない場合の fallback）
-        price_inputs = self.page.query_selector_all(SELECTORS["plan_price_input"])
-        if price_inputs and hourly_prices:
-            # 代表値として最頻出価格を使用
-            from statistics import mode
-            try:
-                rep_price = mode(hourly_prices.values())
-            except Exception:
-                rep_price = list(hourly_prices.values())[0]
-            for inp in price_inputs:
-                inp.fill(str(rep_price))
+        # ② 時間帯別フォームが見つからなければ汎用価格入力欄に代表価格を入れる
+        if filled_count == 0:
+            price_inputs = self.page.query_selector_all(SELECTORS["plan_price_input"])
+            if price_inputs:
+                try:
+                    rep_price = stat_mode(hourly_prices.values())
+                except Exception:
+                    rep_price = list(hourly_prices.values())[0]
+                for inp in price_inputs:
+                    try:
+                        inp.fill(str(rep_price))
+                    except Exception:
+                        pass
+                logger.debug(
+                    "Plan '%s': filled %d generic price inputs with %d",
+                    plan_name, len(price_inputs), rep_price,
+                )
 
         # 保存
         save_btn = self.page.query_selector(SELECTORS["plan_save_button"])
@@ -225,8 +328,22 @@ class SpaceMarketDashboard:
             date_str, start_hour, end_hour, multiplier,
         )
 
-        special_url = f"{DASHBOARD_BASE}/{space_id}/special_operations/new"
-        self.page.goto(special_url, wait_until="networkidle", timeout=30_000)
+        # SpaceMarket の特別営業設定ページ候補 URL
+        # 実際のパスに合わせて調整（/special_operations/new または /special_schedules/new）
+        for special_url in (
+            f"{DASHBOARD_BASE}/{space_id}/special_operations/new",
+            f"{DASHBOARD_BASE}/{space_id}/special_schedules/new",
+        ):
+            self.page.goto(special_url, wait_until="networkidle", timeout=30_000)
+            # フォームが存在するか確認
+            if self.page.query_selector(SELECTORS["special_op_date_input"]):
+                break
+        else:
+            logger.warning(
+                "Special operation form not found for space '%s'. Skipping %s.",
+                space_id, date_str,
+            )
+            return
 
         # 日付入力
         date_input = self.page.query_selector(SELECTORS["special_op_date_input"])
@@ -237,13 +354,18 @@ class SpaceMarketDashboard:
         start_sel = self.page.query_selector(SELECTORS["special_op_start_time"])
         end_sel = self.page.query_selector(SELECTORS["special_op_end_time"])
         if start_sel:
-            start_sel.select_option(f"{start_hour:02d}:00")
+            try:
+                start_sel.select_option(f"{start_hour:02d}:00")
+            except Exception:
+                start_sel.fill(f"{start_hour:02d}:00")
         if end_sel:
-            end_sel.select_option(f"{end_hour:02d}:00")
+            try:
+                end_sel.select_option(f"{end_hour:02d}:00")
+            except Exception:
+                end_sel.fill(f"{end_hour:02d}:00")
 
         # 料金入力（代表価格）
         if special_prices:
-            from statistics import mode as stat_mode
             try:
                 rep_price = stat_mode(special_prices.values())
             except Exception:
