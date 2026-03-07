@@ -1,0 +1,44 @@
+name: Competitor Price Adjustment
+
+on:
+  schedule:
+    # 毎時 0分に実行（JST: UTC+9 のため、UTC で記述）
+    - cron: "0 * * * *"
+  workflow_dispatch:  # 手動実行も可能
+
+jobs:
+  adjust-prices:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Playwright browsers
+        run: python -m playwright install chromium --with-deps
+
+      - name: Run competitor mode
+        env:
+          RUN_MODE: competitor
+          SPACEMARKET_EMAIL: ${{ secrets.SPACEMARKET_EMAIL }}
+          SPACEMARKET_PASSWORD: ${{ secrets.SPACEMARKET_PASSWORD }}
+        run: python scripts/main.py
+
+      - name: Upload price cache
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: competitor-price-cache
+          path: competitor_price_cache.json
+          retention-days: 7
+          if-no-files-found: ignore

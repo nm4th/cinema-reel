@@ -1,0 +1,53 @@
+space:
+  space_id: "130984"
+  operator_id: "sop_geaeuhcrx1dr"
+
+competitor:
+  url: "https://www.spacemarket.com/spaces/1dkozfrlkp3tubw0/?room_uid=xCgEKgWQRY6u8Wv3"
+  cache_file: "competitor_price_cache.json"
+
+business_hours:
+  open: 7   # 7:00
+  close: 23 # 23:00 (last slot start)
+
+# 価格は100円単位で切り捨て
+price_unit: 100
+
+plans:
+  - name: "平日通常プラン"
+    plan_key: "weekday_standard"
+    base: "competitor_3h"      # 競合の3h以上プラン料金を基準
+    discount: 0.10             # -10%
+    days: [mon, tue, wed, thu, fri]
+
+  - name: "平日朝昼割プラン"
+    plan_key: "weekday_morning"
+    base: "weekday_standard"   # 平日通常プランから
+    discount: 0.20             # -20%
+    days: [mon, tue, wed, thu, fri]
+
+  - name: "平日長期プラン"
+    plan_key: "weekday_long"
+    base: "competitor_6h"      # 競合の6h以上プラン料金を基準
+    discount: 0.10             # -10%
+    days: [mon, tue, wed, thu, fri]
+
+  - name: "土日祝プラン"
+    plan_key: "weekend_standard"
+    base: "competitor_3h"      # 競合の3h以上プラン料金を基準
+    discount: 0.10             # -10%
+    days: [sat, sun, holiday]
+
+  - name: "土日祝長期プラン"
+    plan_key: "weekend_long"
+    base: "competitor_6h"      # 競合の6h以上プラン料金を基準
+    discount: 0.10             # -10%
+    days: [sat, sun, holiday]
+
+live_mode:
+  # 特別営業の価格倍率
+  price_multiplier: 1.3
+  # 取得対象日数
+  days_ahead: 14
+  # 対象とする最低放送時間（分）
+  min_duration_minutes: 30
