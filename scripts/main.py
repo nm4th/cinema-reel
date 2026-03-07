@@ -25,8 +25,11 @@ def main() -> None:
     elif mode == "live":
         from live import run as run_live
         run_live()
+    elif mode == "calendar":
+        from calendar_sync import run as run_calendar
+        run_calendar()
     else:
-        logger.error("Unknown RUN_MODE: %s. Use 'competitor' or 'live'.", mode)
+        logger.error("Unknown RUN_MODE: %s. Use 'competitor', 'live', or 'calendar'.", mode)
         sys.exit(1)
 
 

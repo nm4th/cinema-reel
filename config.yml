@@ -51,3 +51,9 @@ live_mode:
   days_ahead: 14
   # 対象とする最低放送時間（分）
   min_duration_minutes: 30
+
+calendar:
+  # Google カレンダーへの同期対象日数（1ヶ月先まで）
+  days_ahead: 30
+  # 対象とする最低放送時間（分）
+  min_duration_minutes: 30
