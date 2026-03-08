@@ -26,15 +26,14 @@ jobs:
 
       - name: Install Playwright browsers
         run: |
-          # Ubuntu 24.04 renamed libasound2 → libasound2t64; create a dummy deb to satisfy playwright's --with-deps
-          sudo apt-get install -y libasound2t64
-          cd /tmp
-          mkdir -p libasound2_dummy/DEBIAN
-          printf 'Package: libasound2\nVersion: 1.1.99\nArchitecture: amd64\nMaintainer: CI\nDescription: Dummy libasound2 shim for Ubuntu 24.04\n' \
-            > libasound2_dummy/DEBIAN/control
-          dpkg-deb --build libasound2_dummy
-          sudo dpkg -i libasound2_dummy.deb
-          python -m playwright install chromium --with-deps
+          python -m playwright install chromium
+          sudo apt-get install -y --no-install-recommends \
+            fonts-liberation libatk-bridge2.0-0t64 libatk1.0-0t64 libatspi2.0-0t64 \
+            libcairo2 libcups2t64 libdbus-1-3 libdrm2 libgbm1 libglib2.0-0t64 \
+            libnspr4 libnss3 libpango-1.0-0 libasound2t64 \
+            libx11-6 libx11-xcb1 libxcb1 libxcomposite1 libxcursor1 libxdamage1 \
+            libxext6 libxfixes3 libxi6 libxkbcommon0 libxrandr2 libxrender1 libxtst6 \
+            xdg-utils
 
       - name: Download latest price cache (from competitor run)
         uses: dawidd6/action-download-artifact@v3
