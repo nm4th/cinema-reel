@@ -8,7 +8,7 @@ on:
 
 jobs:
   sync-calendar:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     timeout-minutes: 60
 
     steps:
@@ -25,7 +25,16 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Install Playwright browsers
-        run: python -m playwright install chromium --with-deps
+        run: |
+          # Ubuntu 24.04 renamed libasound2 → libasound2t64; create a dummy deb to satisfy playwright's --with-deps
+          sudo apt-get install -y libasound2t64
+          cd /tmp
+          mkdir -p libasound2_dummy/DEBIAN
+          printf 'Package: libasound2\nVersion: 1.1.99\nArchitecture: amd64\nMaintainer: CI\nDescription: Dummy libasound2 shim for Ubuntu 24.04\n' \
+            > libasound2_dummy/DEBIAN/control
+          dpkg-deb --build libasound2_dummy
+          sudo dpkg -i libasound2_dummy.deb
+          python -m playwright install chromium --with-deps
 
       - name: Sync live schedule to Google Calendar
         env:
