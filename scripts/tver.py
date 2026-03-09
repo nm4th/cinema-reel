@@ -92,6 +92,7 @@ def _extract_programs_from_next_data(page: Page, date_str: str) -> list[dict]:
         return []
 
     page_props = data.get("props", {}).get("pageProps", {})
+    logger.info("TVer __NEXT_DATA__ pageProps keys: %s", list(page_props.keys())[:20])
 
     # 番組リストが格納されている可能性のあるキーを順番に試す
     candidate_keys = (

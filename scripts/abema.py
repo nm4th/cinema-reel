@@ -163,6 +163,12 @@ def _fetch_slots(start: datetime.datetime, end: datetime.datetime) -> list[dict]
         logger.warning("AbemaTV: no token available, API call will likely return 401.")
     try:
         resp = requests.get(ABEMA_SLOTS_API, params=params, headers=headers, timeout=30)
+        if resp.status_code == 401:
+            logger.warning(
+                "AbemaTV API 401 Unauthorized. Response body: %s",
+                resp.text[:300],
+            )
+            return []
         resp.raise_for_status()
         return resp.json().get("slots", [])
     except Exception as exc:
