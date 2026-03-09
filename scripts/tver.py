@@ -336,7 +336,14 @@ def get_live_schedule(days_ahead: int = 14, min_duration_minutes: int = 30) -> l
     live_events: list[dict] = []
 
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=True)
+        browser = pw.chromium.launch(
+            headless=True,
+            args=[
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+            ],
+        )
         context = browser.new_context(
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -355,7 +362,7 @@ def get_live_schedule(days_ahead: int = 14, min_duration_minutes: int = 30) -> l
             # TVer は日付クエリパラメータをサポートしている可能性がある
             url = f"{TVER_LIVE_URL}?date={date_str}"
             try:
-                page.goto(url, wait_until="networkidle", timeout=60_000)
+                page.goto(url, wait_until="domcontentloaded", timeout=30_000)
             except Exception as exc:
                 logger.warning("TVer: page load failed for %s: %s", date_str, exc)
                 continue

@@ -30,7 +30,11 @@ NOTE: API 仕様は非公式のため変更される可能性があります。
 from __future__ import annotations
 
 import datetime
+import hashlib
+import hmac
 import logging
+import time
+import uuid
 from typing import Any
 
 import requests
@@ -38,10 +42,14 @@ import requests
 logger = logging.getLogger(__name__)
 
 ABEMA_SLOTS_API = "https://api.abema.io/v1/media/slots"
+ABEMA_USERS_API = "https://api.abema.io/v1/users"
 ABEMA_TOP_URL = "https://abema.tv"
 
+# AbemaTV Android アプリに埋め込まれている HMAC 秘密鍵
+_ABEMA_CLIENT_SECRET = "v+Yjs!ufdFQdoZSez"
+
 # AbemaTV API 向けの最低限のヘッダー
-_HEADERS = {
+_BASE_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -51,6 +59,48 @@ _HEADERS = {
     "Referer": ABEMA_TOP_URL + "/",
 }
 
+_cached_token: str | None = None
+
+
+def _get_guest_token() -> str | None:
+    """
+    AbemaTV のゲストユーザートークンを取得する。
+
+    手順:
+      1. UUID を deviceId として生成
+      2. deviceId・タイムスタンプを使って HMAC-SHA256 で applicationKeySecret を計算
+      3. POST /v1/users でトークンを取得
+    """
+    global _cached_token
+    if _cached_token:
+        return _cached_token
+
+    device_id = str(uuid.uuid4())
+    ts = int(time.time())
+    message = f"AppId:com.abema.android\nDeviceId:{device_id}\nTime:{ts}"
+    signature = hmac.new(
+        _ABEMA_CLIENT_SECRET.encode("utf-8"),
+        message.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+    try:
+        resp = requests.post(
+            ABEMA_USERS_API,
+            json={"deviceId": device_id, "applicationKeySecret": signature},
+            headers={**_BASE_HEADERS, "Content-Type": "application/json"},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        token = resp.json().get("token")
+        if token:
+            _cached_token = token
+            logger.debug("AbemaTV: guest token acquired.")
+        return token
+    except Exception as exc:
+        logger.warning("AbemaTV: failed to get guest token: %s", exc)
+        return None
+
 
 def _fetch_slots(start: datetime.datetime, end: datetime.datetime) -> list[dict]:
     """AbemaTV API から番組スロット一覧を取得する（最大 100件/リクエスト）。"""
@@ -59,8 +109,12 @@ def _fetch_slots(start: datetime.datetime, end: datetime.datetime) -> list[dict]
         "endAt": int(end.timestamp()),
         "limit": 200,
     }
+    headers = dict(_BASE_HEADERS)
+    token = _get_guest_token()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     try:
-        resp = requests.get(ABEMA_SLOTS_API, params=params, headers=_HEADERS, timeout=30)
+        resp = requests.get(ABEMA_SLOTS_API, params=params, headers=headers, timeout=30)
         resp.raise_for_status()
         return resp.json().get("slots", [])
     except Exception as exc:
