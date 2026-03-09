@@ -2,8 +2,8 @@ name: Live Schedule to Google Calendar
 
 on:
   schedule:
-    # 毎朝 6:00 JST (= 21:00 UTC 前日) に実行
-    - cron: "0 21 * * *"
+    # 月曜・木曜 6:00 JST (= 21:00 UTC 前日) に実行
+    - cron: "0 21 * * 0,3"
   workflow_dispatch:  # 手動実行も可能
 
 jobs:
