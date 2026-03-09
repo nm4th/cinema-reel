@@ -28,8 +28,11 @@ def main() -> None:
     elif mode == "calendar":
         from calendar_sync import run as run_calendar
         run_calendar()
+    elif mode == "demand":
+        from demand import run as run_demand
+        run_demand()
     else:
-        logger.error("Unknown RUN_MODE: %s. Use 'competitor', 'live', or 'calendar'.", mode)
+        logger.error("Unknown RUN_MODE: %s. Use 'competitor', 'live', 'calendar', or 'demand'.", mode)
         sys.exit(1)
 
 

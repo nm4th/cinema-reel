@@ -44,6 +44,19 @@ plans:
     discount: 0.10             # -10%
     days: [sat, sun, holiday]
 
+demand:
+  # 取得対象日数（今後30日）
+  days_ahead: 30
+  # 対象とする最低放送時間（分）
+  min_duration_minutes: 30
+  # このスコア以上のイベントを出力
+  min_score: 30
+  # Google Trends チェックを行うか（pytrends が必要）
+  use_trends: true
+  # JSON ファイルとして結果を保存するか
+  output_json: false
+  output_json_path: "demand_events.json"
+
 live_mode:
   # 特別営業の価格倍率
   price_multiplier: 1.3
