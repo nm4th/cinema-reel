@@ -257,6 +257,7 @@ def get_live_schedule(days_ahead: int = 30, min_duration_minutes: int = 30) -> l
                 "title":            title,
                 "duration_minutes": duration_min,
                 "source":           "netflix",
+                "time_known":       False,   # Trends からは時刻取得不可
             }
         )
         logger.debug("Netflix Trends event: '%s' on %s", title, ev_date)

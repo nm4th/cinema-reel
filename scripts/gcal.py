@@ -7,9 +7,9 @@ OAuth2 リフレッシュトークンで認証し、生放送イベントをカ�
 
 from __future__ import annotations
 
+import datetime
 import logging
 import os
-from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from google.auth.transport.requests import Request
@@ -39,8 +39,8 @@ class GoogleCalendar:
 
     def _existing_event_keys(self, date_str: str) -> set[str]:
         """その日にこのシステムが追加済みの event_key セットを返す。"""
-        day_start = datetime.fromisoformat(f"{date_str}T00:00:00").replace(tzinfo=JST)
-        day_end = datetime.fromisoformat(f"{date_str}T23:59:59").replace(tzinfo=JST)
+        day_start = datetime.datetime.fromisoformat(f"{date_str}T00:00:00").replace(tzinfo=JST)
+        day_end = datetime.datetime.fromisoformat(f"{date_str}T23:59:59").replace(tzinfo=JST)
         result = (
             self.service.events()
             .list(
@@ -66,37 +66,68 @@ class GoogleCalendar:
         end_hour: int,
         title: str,
         source: str,
+        time_known: bool = True,
     ) -> None:
-        """イベントが未登録なら追加する（重複はスキップ）。"""
-        event_key = f"{date_str}|{start_hour}|{title}"
-        existing = self._existing_event_keys(date_str)
-        if event_key in existing:
-            logger.info("Skip (already exists): %s %s", date_str, title)
-            return
+        """
+        イベントが未登録なら Google カレンダーに追加する（重複はスキップ）。
 
-        start_dt = datetime.fromisoformat(f"{date_str}T{start_hour:02d}:00:00").replace(tzinfo=JST)
-        end_dt = datetime.fromisoformat(f"{date_str}T{end_hour:02d}:00:00").replace(tzinfo=JST)
+        time_known=False の場合は終日イベントとして登録し、
+        タイトルに「(時刻未確定)」を付与する。
+        """
+        source_labels = {"abema": "AbemaTV", "tver": "TVer", "netflix": "Netflix"}
+        source_label = source_labels.get(source, source)
 
-        source_label = {"abema": "AbemaTV", "tver": "TVer"}.get(source, source)
-        summary = f"[生放送] {title}（{source_label}）"
+        if time_known:
+            event_key = f"{date_str}|{start_hour}|{title}"
+            existing = self._existing_event_keys(date_str)
+            if event_key in existing:
+                logger.info("Skip (already exists): %s %s", date_str, title)
+                return
 
-        event = {
-            "summary": summary,
-            "start": {"dateTime": start_dt.isoformat()},
-            "end": {"dateTime": end_dt.isoformat()},
-            "extendedProperties": {
-                "private": {
-                    "source": SOURCE_TAG,
-                    "event_key": event_key,
-                }
-            },
-        }
-        self.service.events().insert(calendarId=self.calendar_id, body=event).execute()
-        logger.info(
-            "Added: %s %02d:00-%02d:00 [%s] %s",
-            date_str,
-            start_hour,
-            end_hour,
-            source_label,
-            title,
-        )
+            start_dt = datetime.datetime.fromisoformat(
+                f"{date_str}T{start_hour:02d}:00:00"
+            ).replace(tzinfo=JST)
+            end_dt = datetime.datetime.fromisoformat(
+                f"{date_str}T{end_hour:02d}:00:00"
+            ).replace(tzinfo=JST)
+
+            summary = f"[生放送] {title}（{source_label}）"
+            event = {
+                "summary": summary,
+                "start": {"dateTime": start_dt.isoformat()},
+                "end": {"dateTime": end_dt.isoformat()},
+                "extendedProperties": {
+                    "private": {"source": SOURCE_TAG, "event_key": event_key}
+                },
+            }
+            self.service.events().insert(calendarId=self.calendar_id, body=event).execute()
+            logger.info(
+                "Added: %s %02d:00-%02d:00 [%s] %s",
+                date_str, start_hour, end_hour, source_label, title,
+            )
+        else:
+            # 終日イベント（時刻未確定）
+            event_key = f"{date_str}|allday|{title}"
+            existing = self._existing_event_keys(date_str)
+            if event_key in existing:
+                logger.info("Skip (already exists): %s %s", date_str, title)
+                return
+
+            # Google Calendar API: 終日イベントの end.date は翌日
+            end_date = (
+                datetime.date.fromisoformat(date_str) + datetime.timedelta(days=1)
+            ).isoformat()
+
+            summary = f"[生放送・時刻未確定] {title}（{source_label}）"
+            event = {
+                "summary": summary,
+                "start": {"date": date_str},
+                "end": {"date": end_date},
+                "extendedProperties": {
+                    "private": {"source": SOURCE_TAG, "event_key": event_key}
+                },
+            }
+            self.service.events().insert(calendarId=self.calendar_id, body=event).execute()
+            logger.info(
+                "Added (all-day): %s [%s] %s", date_str, source_label, title,
+            )
