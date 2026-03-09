@@ -172,8 +172,6 @@ def _parse_episode_item(item: dict, date_str: str) -> dict | None:
         start_dt = datetime.datetime.fromtimestamp(int(start_ts), tz=JST)
         end_dt = datetime.datetime.fromtimestamp(int(end_ts), tz=JST)
         item_date = start_dt.strftime("%Y-%m-%d")
-        if item_date != date_str:
-            return None
         start_h = start_dt.hour
         end_h = end_dt.hour if end_dt.minute == 0 else end_dt.hour + 1
         duration_min = max(0, (int(end_ts) - int(start_ts)) // 60)
@@ -406,5 +404,14 @@ def get_live_schedule(days_ahead: int = 14, min_duration_minutes: int = 30) -> l
 
         browser.close()
 
-    logger.info("TVer: found %d live events (>= %d min).", len(live_events), min_duration_minutes)
-    return live_events
+    # ?date= が機能しない場合、同じ番組が複数回取得される可能性があるため重複排除
+    seen: set[tuple] = set()
+    deduped: list[dict] = []
+    for ev in live_events:
+        key = (ev["date"], ev["start_hour"], ev["title"])
+        if key not in seen:
+            seen.add(key)
+            deduped.append(ev)
+
+    logger.info("TVer: found %d live events (>= %d min).", len(deduped), min_duration_minutes)
+    return deduped

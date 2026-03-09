@@ -134,7 +134,7 @@ def _get_guest_token() -> str | None:
         token = resp.json().get("token")
         if token:
             _cached_token = token
-            logger.debug("AbemaTV: guest token acquired.")
+            logger.info("AbemaTV: guest token acquired (length=%d).", len(token))
         else:
             logger.warning(
                 "AbemaTV: guest token not found in response. status=%d body=%s",
@@ -158,6 +158,7 @@ def _fetch_slots(start: datetime.datetime, end: datetime.datetime) -> list[dict]
     token = _get_guest_token()
     if token:
         headers["Authorization"] = f"Bearer {token}"
+        logger.debug("AbemaTV: using token for slots request (start=%d, end=%d).", params["startAt"], params["endAt"])
     else:
         logger.warning("AbemaTV: no token available, API call will likely return 401.")
     try:
