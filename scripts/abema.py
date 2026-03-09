@@ -29,6 +29,7 @@ NOTE: API 仕様は非公式のため変更される可能性があります。
 
 from __future__ import annotations
 
+import base64
 import datetime
 import hashlib
 import hmac
@@ -45,8 +46,12 @@ ABEMA_SLOTS_API = "https://api.abema.io/v1/media/slots"
 ABEMA_USERS_API = "https://api.abema.io/v1/users"
 ABEMA_TOP_URL = "https://abema.tv"
 
-# AbemaTV Android アプリに埋め込まれている HMAC 秘密鍵
-_ABEMA_CLIENT_SECRET = "v+Yjs!ufdFQdoZSez"
+# AbemaTV アプリに埋め込まれている HMAC 秘密鍵（yt-dlp / streamlink 参照）
+_SECRETKEY = (
+    b"v+Gjs=25Aw5erR!J8ZuvRrCx*rGswhB&qdHd_SYerEWdU&a?3DzN9B"
+    b"Rbp5KwY4hEmcj5#fykMjJ=AuWz5GSMY-d@H7DMEh3M@9n2G552Us$$"
+    b"k9cD=3TxwWe86!x#Zyhe"
+)
 
 # AbemaTV API 向けの最低限のヘッダー
 _BASE_HEADERS = {
@@ -61,6 +66,46 @@ _BASE_HEADERS = {
 
 _cached_token: str | None = None
 
+_JST = datetime.timezone(datetime.timedelta(hours=9))
+
+
+def _generate_aks(device_id: str) -> str:
+    """
+    AbemaTV の applicationKeySecret を生成する（yt-dlp の _generate_aks 相当）。
+
+    yt-dlp / streamlink の実装を参考に、HMAC-SHA256 の mix_once / mix_twist を
+    月・日・時に基づいて繰り返し、URL-safe Base64 で返す。
+    """
+    deviceid_bytes = device_id.encode("utf-8")
+
+    # 次の正時（JST）のUnixタイムスタンプ文字列
+    now_jst = datetime.datetime.now(tz=_JST)
+    ts_1hour = now_jst.replace(minute=0, second=0, microsecond=0) + datetime.timedelta(hours=1)
+    ts_1hour_str = str(int(ts_1hour.timestamp())).encode("utf-8")
+    t = ts_1hour.timetuple()
+
+    tmp: bytes = b""
+
+    def mix_once(nonce: bytes) -> None:
+        nonlocal tmp
+        tmp = hmac.new(_SECRETKEY, nonce, hashlib.sha256).digest()
+
+    def mix_tmp(count: int) -> None:
+        for _ in range(count):
+            mix_once(tmp)
+
+    def mix_twist(nonce: bytes) -> None:
+        mix_once(base64.urlsafe_b64encode(tmp).rstrip(b"=") + nonce)
+
+    mix_once(_SECRETKEY)
+    mix_tmp(t.tm_mon)
+    mix_twist(deviceid_bytes)
+    mix_tmp(t.tm_mday % 5)
+    mix_twist(ts_1hour_str)
+    mix_tmp(t.tm_hour % 5)
+
+    return base64.urlsafe_b64encode(tmp).rstrip(b"=").decode("utf-8")
+
 
 def _get_guest_token() -> str | None:
     """
@@ -68,7 +113,7 @@ def _get_guest_token() -> str | None:
 
     手順:
       1. UUID を deviceId として生成
-      2. deviceId・タイムスタンプを使って HMAC-SHA256 で applicationKeySecret を計算
+      2. _generate_aks() で applicationKeySecret を計算
       3. POST /v1/users でトークンを取得
     """
     global _cached_token
@@ -76,18 +121,12 @@ def _get_guest_token() -> str | None:
         return _cached_token
 
     device_id = str(uuid.uuid4())
-    ts = int(time.time())
-    message = f"AppId:com.abema.android\nDeviceId:{device_id}\nTime:{ts}"
-    signature = hmac.new(
-        _ABEMA_CLIENT_SECRET.encode("utf-8"),
-        message.encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()
+    aks = _generate_aks(device_id)
 
     try:
         resp = requests.post(
             ABEMA_USERS_API,
-            json={"deviceId": device_id, "applicationKeySecret": signature},
+            json={"deviceId": device_id, "applicationKeySecret": aks},
             headers={**_BASE_HEADERS, "Content-Type": "application/json"},
             timeout=30,
         )
@@ -96,6 +135,12 @@ def _get_guest_token() -> str | None:
         if token:
             _cached_token = token
             logger.debug("AbemaTV: guest token acquired.")
+        else:
+            logger.warning(
+                "AbemaTV: guest token not found in response. status=%d body=%s",
+                resp.status_code,
+                resp.text[:200],
+            )
         return token
     except Exception as exc:
         logger.warning("AbemaTV: failed to get guest token: %s", exc)
@@ -113,6 +158,8 @@ def _fetch_slots(start: datetime.datetime, end: datetime.datetime) -> list[dict]
     token = _get_guest_token()
     if token:
         headers["Authorization"] = f"Bearer {token}"
+    else:
+        logger.warning("AbemaTV: no token available, API call will likely return 401.")
     try:
         resp = requests.get(ABEMA_SLOTS_API, params=params, headers=headers, timeout=30)
         resp.raise_for_status()

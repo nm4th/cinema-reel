@@ -362,7 +362,9 @@ def get_live_schedule(days_ahead: int = 14, min_duration_minutes: int = 30) -> l
             # TVer は日付クエリパラメータをサポートしている可能性がある
             url = f"{TVER_LIVE_URL}?date={date_str}"
             try:
-                page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+                page.goto(url, wait_until="load", timeout=45_000)
+                # SPA の React 描画を待つ
+                page.wait_for_timeout(4000)
             except Exception as exc:
                 logger.warning("TVer: page load failed for %s: %s", date_str, exc)
                 continue
